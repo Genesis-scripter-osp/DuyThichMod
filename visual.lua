@@ -364,5 +364,3 @@ function Visual.Cleanup()
 end
 
 return Visual
-
-
