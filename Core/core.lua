@@ -229,11 +229,11 @@ end
 -- ============================================================
 --  GETTER / SETTER
 -- ============================================================
-function Core.IsOn(id: string): boolean
+function Core.IsOn(id)
     return Core.State.ActiveToggles[id] == true
 end
 
-function Core.Toggle(id: string)
+function Core.Toggle(id)
     local feat = Core._ById[id]
     if not feat or feat.type ~= "toggle" then return end
     local newVal = not Core.State.ActiveToggles[id]
@@ -243,17 +243,17 @@ function Core.Toggle(id: string)
     if Core._Callbacks[id] then Core._Callbacks[id](newVal) end
 end
 
-function Core.GetSlider(id: string): number
+function Core.GetSlider(id)
     return Core.State.SliderValues[id] or 0
 end
 
-function Core.SetSlider(id: string, value: number)
+function Core.SetSlider(id, value)
     local feat = Core._ById[id]
     if not feat or feat.type ~= "slider" then return end
     Core.State.SliderValues[id] = math.clamp(value, feat.min, feat.max)
 end
 
-function Core.GetActiveCount(): number
+function Core.GetActiveCount()
     local n = 0
     for _, v in pairs(Core.State.ActiveToggles) do
         if v then n += 1 end
@@ -265,14 +265,14 @@ end
 --  CALLBACK SYSTEM
 -- ============================================================
 Core._Callbacks = {}
-function Core.OnToggle(id: string, fn: (boolean) -> ())
+function Core.OnToggle(id, fn)
     Core._Callbacks[id] = fn
 end
 
 -- ============================================================
 --  ACTIVITY LOG
 -- ============================================================
-function Core.Log(msg: string, level: string?)
+function Core.Log(msg, level)
     level = level or "info"
     local entry = { time = os.date("%H:%M:%S"), msg = msg, level = level }
     table.insert(Core.State.Log, 1, entry)
@@ -297,17 +297,26 @@ function Core.SaveConfig()
         Core.Log("Lỗi lưu config: " .. tostring(encoded), "warn")
     end
 end
-
+        print("Đang chuẩn bị Load Config...")
 function Core.LoadConfig()
     local ok, raw = pcall(readfile, CONFIG_FILE)
     if not ok or not raw or raw == "" then
         Core.Log("Không tìm thấy config, dùng mặc định.", "info")
         return
     end
-    local parsed = HttpService:JSONDecode(raw)
-    if parsed.toggles then
+    local success, err = pcall(function()
+            parsed = HttpService:JSONDecode(raw)
+    end)
+
+        if not success or not parsed then
+            Core.Log("Config bị lỗi định dạng hoặc trống.", "warn")
+            return
+    end
+        print("Đã giải mã JSON thành công!")
+    
         for k, v in pairs(parsed.toggles) do Core.State.ActiveToggles[k] = v end
     end
+
     if parsed.sliders then
         for k, v in pairs(parsed.sliders) do Core.State.SliderValues[k] = v end
     end
@@ -320,13 +329,15 @@ function Core.ResetConfig()
     Core.Log("Config đã reset.", "warn")
 end
 
-function Core.GetGroup(group: string): { any }
+function Core.GetGroup(group)
     local result = {}
     for _, feat in ipairs(Core.Registry) do
         if feat.group == group then table.insert(result, feat) end
     end
     return result
 end
+
+print("--- PHANTOM HUB: CORE LOADED 100% ---")
 
 return Core
 
