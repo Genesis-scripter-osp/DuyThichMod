@@ -132,15 +132,14 @@ end
 -- ============================================================
 --  MODULES
 -- ============================================================
-local BASE_URL = "https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
-
-local MODULES = {
-    {name="Core",    url=BASE_URL.."Core/core.lua",       required=true},
-    {name="UI",      url=BASE_URL.."UI/ui.lua",           required=true},
-    {name="Systems", url=BASE_URL.."Systems/systems.lua", required=false},
-    {name="Network", url=BASE_URL.."Network/network.lua", required=false},
-    {name="Visual",  url=BASE_URL.."Visual/visual.lua",   required=false},
-    {name="Phantom", url=BASE_URL.."Phantom.lua",         required=false}
+local BASE_URL="https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
+local MODULES={
+    {name="Core",   url=BASE_URL.."core.lua",   required=true, pct=15},
+    {name="UI",     url=BASE_URL.."ui.lua",     required=true, pct=35},
+    {name="Systems",url=BASE_URL.."systems.lua",required=false,pct=55},
+    {name="Network",url=BASE_URL.."network.lua",required=false,pct=70},
+    {name="Visual", url=BASE_URL.."visual.lua", required=false,pct=85},
+    {name="Phantom",url=BASE_URL.."Phantom.lua",required=false,pct=95},
 }
 
 local function SafeLoad(url,name)
@@ -319,5 +318,3 @@ LocalPlayer.AncestryChanged:Connect(function()
         _G.PhantomHub_Loaded=false
     end
 end)
-
-
