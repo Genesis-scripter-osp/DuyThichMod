@@ -538,9 +538,13 @@ function PlayerUtils.Init()
         local c, hrp = GetChar()
         if not c or not hrp then return end
         if on then
+            
             local bg = Instance.new("BodyGyro", hrp)
             bg.Name = "FlyGyro"; bg.MaxTorque = Vector3.new(1e9,1e9,1e9); bg.D = 50
-            local bv.Name = "FlyVelocity"; bv.MaxForce = Vector3.new(1e9,1e9,1e9); bv.Velocity = Vector3.zero
+            
+            local bv = Instance.new("BodyVelocity", hrp)
+            bv.Name = "FlyVelocity"; bv.MaxForce = Vector3.new(1e9,1e9,1e9); bv.Velocity = Vector3.zero
+            
             PlayerUtils._flyBV = bv
             PlayerUtils._flyConn = RunService.Heartbeat:Connect(function()
                 if not Core.IsOn("flyMode") then return end
@@ -732,4 +736,5 @@ function Systems.Tick(dt: number)
 end
 
 return Systems
+
 
