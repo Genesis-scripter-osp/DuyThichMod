@@ -6,7 +6,7 @@ if _G.PhantomHub_Loader then
 end
 _G.PhantomHub_Loader = true
 
-local URL = "https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/main.lua"
+local URL = "https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/Phantom.lua"
 
 local success,err = pcall(function()
     loadstring(game:HttpGet(URL))()
