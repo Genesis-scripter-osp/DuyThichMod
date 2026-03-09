@@ -135,11 +135,11 @@ end
 local BASE_URL = "https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
 
 local MODULES = {
-    {name="Core",    url=BASE_URL.."Core/Core.lua",       required=true},
-    {name="UI",      url=BASE_URL.."UI/UI.lua",           required=true},
-    {name="Systems", url=BASE_URL.."Systems/Systems.lua", required=false},
-    {name="Network", url=BASE_URL.."Network/Network.lua", required=false},
-    {name="Visual",  url=BASE_URL.."Visual/Visual.lua",   required=false},
+    {name="Core",    url=BASE_URL.."Core/core.lua",       required=true},
+    {name="UI",      url=BASE_URL.."UI/ui.lua",           required=true},
+    {name="Systems", url=BASE_URL.."Systems/systems.lua", required=false},
+    {name="Network", url=BASE_URL.."Network/network.lua", required=false},
+    {name="Visual",  url=BASE_URL.."Visual/visual.lua",   required=false},
     {name="Phantom", url=BASE_URL.."Phantom.lua",         required=false}
 }
 
