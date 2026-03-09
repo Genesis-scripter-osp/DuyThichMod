@@ -132,14 +132,15 @@ end
 -- ============================================================
 --  MODULES
 -- ============================================================
-local BASE_URL="https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
-local MODULES={
-    {name="Core",   url=BASE_URL.."core.lua",   required=true, pct=15},
-    {name="UI",     url=BASE_URL.."ui.lua",     required=true, pct=35},
-    {name="Systems",url=BASE_URL.."systems.lua",required=false,pct=55},
-    {name="Network",url=BASE_URL.."network.lua",required=false,pct=70},
-    {name="Visual", url=BASE_URL.."visual.lua", required=false,pct=85},
-    {name="Phantom",url=BASE_URL.."Phantom.lua",required=false,pct=95},
+local BASE_URL = "https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
+
+local MODULES = {
+    {name="Core",    url=BASE_URL.."Core/Core.lua",       required=true},
+    {name="UI",      url=BASE_URL.."UI/UI.lua",           required=true},
+    {name="Systems", url=BASE_URL.."Systems/Systems.lua", required=false},
+    {name="Network", url=BASE_URL.."Network/Network.lua", required=false},
+    {name="Visual",  url=BASE_URL.."Visual/Visual.lua",   required=false},
+    {name="Phantom", url=BASE_URL.."Phantom.lua",         required=false}
 }
 
 local function SafeLoad(url,name)
