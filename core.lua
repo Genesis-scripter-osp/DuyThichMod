@@ -1,351 +1,332 @@
 -- ============================================================
---  PHANTOM HUB  |  main.lua  v4.2.1
---  Fix: Systems.Init gọi đúng · Toggle hoạt động
+--  PHANTOM HUB  |  core.lua
+--  Quản lý state trung tâm, feature registry, config I/O
+--  Cập nhật: Blox Fruits Update 29 (Control Update - 23/12/2025)
+--  Thêm: Dungeon System · Trinket System · PvP Arena · Control Rework
 -- ============================================================
 
-if _G.PhantomHub_Loaded then warn("[PhantomHub] Đã load rồi.") return end
-_G.PhantomHub_Loaded = true
+local HttpService = game:GetService("HttpService")
+local Players     = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local LocalPlayer      = Players.LocalPlayer
-local PlayerGui        = LocalPlayer:WaitForChild("PlayerGui")
+local Core = {}
 
-local function Create(class, props)
-    local obj = Instance.new(class)
-    for k,v in pairs(props) do if k~="Parent" then (obj::any)[k]=v end end
-    if props.Parent then obj.Parent = props.Parent end
-    return obj
-end
-local function Tween(obj, goal, t, style, dir)
-    TweenService:Create(obj, TweenInfo.new(t or 0.3,
-        style or Enum.EasingStyle.Quad,
-        dir   or Enum.EasingDirection.Out), goal):Play()
-end
+local CONFIG_FILE = "PhantomHub_config.json"
 
 -- ============================================================
---  LOADING SCREEN
+--  STATE
 -- ============================================================
-local LoadGui = Create("ScreenGui",{Name="PhantomLoad",ResetOnSpawn=false,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,Parent=PlayerGui})
-
-local Overlay = Create("Frame",{Size=UDim2.new(1,0,1,0),
-    BackgroundColor3=Color3.fromRGB(5,5,10),BorderSizePixel=0,Parent=LoadGui})
-Create("UIGradient",{Color=ColorSequence.new({
-    ColorSequenceKeypoint.new(0,Color3.fromRGB(10,5,25)),
-    ColorSequenceKeypoint.new(1,Color3.fromRGB(5,5,15))}),
-    Rotation=135,Parent=Overlay})
-
-for i=1,20 do
-    math.randomseed(i*9999)
-    local d=Create("Frame",{
-        Size=UDim2.new(0,math.random(2,5),0,math.random(2,5)),
-        Position=UDim2.new(math.random(),0,math.random(),0),
-        BackgroundColor3=Color3.fromRGB(math.random(60,180),0,math.random(150,255)),
-        BackgroundTransparency=math.random(50,80)/100,
-        BorderSizePixel=0,Parent=Overlay})
-    Create("UICorner",{CornerRadius=UDim.new(1,0),Parent=d})
-end
-
-local LoadBox = Create("Frame",{
-    Size=UDim2.new(0,380,0,270),
-    Position=UDim2.new(0.5,-190,0.65,-135),
-    BackgroundColor3=Color3.fromRGB(10,8,20),
-    BackgroundTransparency=1,BorderSizePixel=0,Parent=Overlay})
-Create("UICorner",{CornerRadius=UDim.new(0,14),Parent=LoadBox})
-Create("UIStroke",{Color=Color3.fromRGB(138,43,226),Thickness=1.5,Parent=LoadBox})
-
-Create("TextLabel",{Size=UDim2.new(1,0,0,44),Position=UDim2.new(0,0,0,14),
-    BackgroundTransparency=1,Text="👻  PHANTOM HUB",
-    TextColor3=Color3.fromRGB(0,255,136),TextSize=24,Font=Enum.Font.GothamBlack,Parent=LoadBox})
-Create("TextLabel",{Size=UDim2.new(1,0,0,18),Position=UDim2.new(0,0,0,52),
-    BackgroundTransparency=1,Text="Blox Fruits  ·  Update 29  ·  v4.2.1",
-    TextColor3=Color3.fromRGB(138,43,226),TextSize=10,Font=Enum.Font.Code,Parent=LoadBox})
-Create("Frame",{Size=UDim2.new(0.85,0,0,1),Position=UDim2.new(0.075,0,0,78),
-    BackgroundColor3=Color3.fromRGB(50,20,80),BorderSizePixel=0,Parent=LoadBox})
-
-local StatusLbl=Create("TextLabel",{Size=UDim2.new(0.68,0,0,18),
-    Position=UDim2.new(0.06,0,0,88),BackgroundTransparency=1,
-    Text="Khởi động...",TextColor3=Color3.fromRGB(180,180,200),
-    TextSize=10,Font=Enum.Font.GothamSemibold,
-    TextXAlignment=Enum.TextXAlignment.Left,Parent=LoadBox})
-local PctLbl=Create("TextLabel",{Size=UDim2.new(0.24,0,0,18),
-    Position=UDim2.new(0.7,0,0,88),BackgroundTransparency=1,
-    Text="0%",TextColor3=Color3.fromRGB(0,255,136),
-    TextSize=12,Font=Enum.Font.GothamBold,
-    TextXAlignment=Enum.TextXAlignment.Right,Parent=LoadBox})
-
-local BarTrack=Create("Frame",{Size=UDim2.new(0.88,0,0,8),
-    Position=UDim2.new(0.06,0,0,112),
-    BackgroundColor3=Color3.fromRGB(20,12,40),BorderSizePixel=0,Parent=LoadBox})
-Create("UICorner",{CornerRadius=UDim.new(1,0),Parent=BarTrack})
-local BarFill=Create("Frame",{Size=UDim2.new(0,0,1,0),
-    BackgroundColor3=Color3.fromRGB(0,255,136),BorderSizePixel=0,Parent=BarTrack})
-Create("UICorner",{CornerRadius=UDim.new(1,0),Parent=BarFill})
-Create("UIGradient",{Color=ColorSequence.new({
-    ColorSequenceKeypoint.new(0,Color3.fromRGB(0,180,255)),
-    ColorSequenceKeypoint.new(0.5,Color3.fromRGB(0,255,136)),
-    ColorSequenceKeypoint.new(1,Color3.fromRGB(138,43,226))}),Parent=BarFill})
-
-local LogScroll=Create("ScrollingFrame",{
-    Size=UDim2.new(0.88,0,0,100),Position=UDim2.new(0.06,0,0,130),
-    BackgroundColor3=Color3.fromRGB(6,4,14),BackgroundTransparency=0.2,
-    BorderSizePixel=0,ScrollBarThickness=0,
-    CanvasSize=UDim2.new(0,0,0,0),Parent=LoadBox})
-Create("UICorner",{CornerRadius=UDim.new(0,6),Parent=LogScroll})
-local LogLayout=Create("UIListLayout",{Padding=UDim.new(0,2),
-    SortOrder=Enum.SortOrder.LayoutOrder,Parent=LogScroll})
-Create("UIPadding",{PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6),
-    PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),Parent=LogScroll})
-
-local logIdx=0
-local function AddLog(msg, color)
-    logIdx+=1
-    Create("TextLabel",{Size=UDim2.new(1,0,0,13),BackgroundTransparency=1,
-        Text=msg,TextColor3=color or Color3.fromRGB(150,150,170),
-        TextSize=10,Font=Enum.Font.Code,
-        TextXAlignment=Enum.TextXAlignment.Left,
-        LayoutOrder=logIdx,Parent=LogScroll})
-    LogScroll.CanvasSize=UDim2.new(0,0,0,LogLayout.AbsoluteContentSize.Y+8)
-    LogScroll.CanvasPosition=Vector2.new(0,9999)
-end
-
-local function SetProgress(pct, status)
-    pct=math.clamp(pct,0,100)
-    Tween(BarFill,{Size=UDim2.new(pct/100,0,1,0)},0.35,
-        Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
-    PctLbl.Text=math.round(pct).."%"
-    StatusLbl.Text=status
-    AddLog(string.format("[%3d%%] %s",math.round(pct),status))
-end
-
--- ============================================================
---  MODULES
--- ============================================================
-local BASE="https://raw.githubusercontent.com/Genesis-scripter-osp/DuyThichMod/main/"
-local MODULES={
-    {name="Core",   url=BASE.."core.lua",   required=true,  pct=18},
-    {name="UI",     url=BASE.."ui.lua",     required=true,  pct=36},
-    {name="Systems",url=BASE.."systems.lua",required=false, pct=54},
-    {name="Network",url=BASE.."network.lua",required=false, pct=70},
-    {name="Visual", url=BASE.."visual.lua", required=false, pct=85},
-    {name="Phantom",url=BASE.."Phantom.lua",required=false, pct=95},
+Core.State = {
+    Running       = true,
+    ActiveToggles = {},
+    SliderValues  = {},
+    Stats = {
+        MobsKilled      = 0,
+        QuestsDone      = 0,
+        BossesKilled    = 0,
+        FruitsCollected = 0,
+        ServerHops      = 0,
+        DungeonRuns     = 0,
+        TrinketsFound   = 0,
+        StartTime       = os.clock(),
+    },
+    Log = {},
 }
 
-local function SafeLoad(url, name)
-    local ok, src = pcall(function()
-        return game:HttpGet(url, true)
-    end)
-    if not ok or type(src)~="string" or #src<20 then
-        AddLog("✗ "..name.." — HTTP lỗi",Color3.fromRGB(255,80,80))
-        return nil
-    end
-    if src:sub(1,15):find("<!DOCTYPE") or src:find("404: Not Found") then
-        AddLog("✗ "..name.." — 404 chưa có trên GitHub",Color3.fromRGB(255,140,0))
-        return nil
-    end
-    local fn, e = loadstring(src, "="..name)
-    if not fn then
-        AddLog("✗ "..name.." — lỗi biên dịch: "..tostring(e),Color3.fromRGB(255,80,80))
-        return nil
-    end
-    local ok2, r = pcall(fn)
-    if not ok2 then
-        AddLog("✗ "..name.." — lỗi chạy: "..tostring(r),Color3.fromRGB(255,80,80))
-        return nil
-    end
-    AddLog("✓ "..name.." sẵn sàng",Color3.fromRGB(0,255,136))
-    return r
+-- ============================================================
+--  FEATURE REGISTRY — 130+ chức năng (Update 29)
+-- ============================================================
+Core.Registry = {
+
+    -- ── 1. MAIN / AUTO FARM ──────────────────────────────────
+    { id="autoFarm",         label="Auto Farm",                group="main",    type="toggle", default=false },
+    { id="autoFarmLevel",    label="Auto Farm Level",           group="main",    type="toggle", default=false },
+    { id="autoQuest",        label="Auto Quest",                group="main",    type="toggle", default=false },
+    { id="autoNextQuest",    label="Auto Next Quest",           group="main",    type="toggle", default=false },
+    { id="autoNextIsland",   label="Auto Next Island",          group="main",    type="toggle", default=false },
+    { id="smartNPCFinder",   label="Smart NPC Finder",          group="main",    type="toggle", default=false },
+    { id="autoEquipBest",    label="Auto Equip Best Weapon",    group="main",    type="toggle", default=false },
+    { id="autoEquipMelee",   label="Auto Equip Melee",          group="main",    type="toggle", default=false },
+    { id="autoEquipSword",   label="Auto Equip Sword",          group="main",    type="toggle", default=false },
+    { id="autoEquipFruit",   label="Auto Equip Fruit",          group="main",    type="toggle", default=false },
+    { id="autoUseSkills",    label="Auto Use Skills",           group="main",    type="toggle", default=false },
+    { id="fastFarm",         label="Fast Farm Mode",            group="main",    type="toggle", default=false },
+    { id="farmNearNPC",      label="Farm Near NPC",             group="main",    type="toggle", default=false },
+    { id="farmMobCluster",   label="Farm Mob Cluster",          group="main",    type="toggle", default=false },
+    { id="farmBossLevel",    label="Farm Boss While Leveling",  group="main",    type="toggle", default=false },
+    { id="autoRespawnNPC",   label="Auto Respawn NPC",          group="main",    type="toggle", default=false },
+    { id="autoRetarget",     label="Auto Re-target Enemy",      group="main",    type="toggle", default=false },
+
+    -- ── 2. COMBAT SYSTEM ─────────────────────────────────────
+    { id="fastAttack",       label="Fast Attack",               group="combat",  type="toggle", default=false },
+    { id="noDelay",          label="Attack No Delay",           group="combat",  type="toggle", default=false },
+    { id="autoClick",        label="Auto Click",                group="combat",  type="toggle", default=false },
+    { id="autoSkillZ",       label="Auto Skill Z",              group="combat",  type="toggle", default=false },
+    { id="autoSkillX",       label="Auto Skill X",              group="combat",  type="toggle", default=false },
+    { id="autoSkillC",       label="Auto Skill C",              group="combat",  type="toggle", default=false },
+    { id="autoSkillV",       label="Auto Skill V",              group="combat",  type="toggle", default=false },
+    { id="autoSkillF",       label="Auto Skill F",              group="combat",  type="toggle", default=false },
+    { id="autoHaki",         label="Auto Haki",                 group="combat",  type="toggle", default=false },
+    { id="autoObsHaki",      label="Auto Observation Haki",     group="combat",  type="toggle", default=false },
+    { id="aimAssist",        label="Aim Assist",                group="combat",  type="toggle", default=false },
+    { id="expandHitbox",     label="Expand Hitbox",             group="combat",  type="slider", default=1, min=1, max=20 },
+    { id="enemyLock",        label="Enemy Lock Target",         group="combat",  type="toggle", default=false },
+    { id="distanceAttack",   label="Distance Attack Mode",      group="combat",  type="toggle", default=false },
+
+    -- ── 3. BOSS SYSTEM ───────────────────────────────────────
+    { id="autoBoss",         label="Auto Boss",                 group="boss",    type="toggle", default=false },
+    { id="autoEliteBoss",    label="Auto Elite Boss",           group="boss",    type="toggle", default=false },
+    { id="autoRaidBoss",     label="Auto Raid Boss",            group="boss",    type="toggle", default=false },
+    { id="autoDarkbeard",    label="Auto Darkbeard",            group="boss",    type="toggle", default=false },
+    { id="autoRipIndra",     label="Auto Rip Indra",            group="boss",    type="toggle", default=false },
+    { id="autoDoughKing",    label="Auto Dough King",           group="boss",    type="toggle", default=false },
+    { id="autoSoulReaper",   label="Auto Soul Reaper",          group="boss",    type="toggle", default=false },
+    { id="bossNotifier",     label="Boss Spawn Notifier",       group="boss",    type="toggle", default=false },
+    { id="bossFinder",       label="Boss Finder ESP",           group="boss",    type="toggle", default=false },
+    { id="bossServerHop",    label="Auto Boss Server Hop",      group="boss",    type="toggle", default=false },
+
+    -- ── 4. DUNGEON SYSTEM (MỚI - Update 29) ─────────────────
+    { id="autoDungeon",      label="Auto Dungeon",              group="dungeon", type="toggle", default=false },
+    { id="dungeonNormal",    label="Dungeon Normal (Lv500+)",   group="dungeon", type="toggle", default=false },
+    { id="dungeonHard",      label="Dungeon Hard (Lv1000+)",    group="dungeon", type="toggle", default=false },
+    { id="dungeonNightmare", label="Dungeon Nightmare(Lv1800+)",group="dungeon", type="toggle", default=false },
+    { id="dungeonInferno",   label="Dungeon Inferno (Lv2400+)", group="dungeon", type="toggle", default=false },
+    { id="autoClearFloors",  label="Auto Clear Floors",         group="dungeon", type="toggle", default=false },
+    { id="autoPickPowerUp",  label="Auto Pick Power-Up Card",   group="dungeon", type="toggle", default=false },
+    { id="dungeonBossKill",  label="Auto Kill Dungeon Boss",    group="dungeon", type="toggle", default=false },
+    { id="autoCollectReward",label="Auto Collect Dungeon Reward",group="dungeon",type="toggle", default=false },
+    { id="dungeonServerHop", label="Dungeon Server Hop",        group="dungeon", type="toggle", default=false },
+    { id="tpLucianNPC",      label="TP Lucian NPC (Dungeon)",   group="dungeon", type="button"  },
+
+    -- ── 5. TRINKET SYSTEM (MỚI - Update 29) ─────────────────
+    { id="autoFarmTrinket",  label="Auto Farm Trinket",         group="trinket", type="toggle", default=false },
+    { id="autoEquipTrinket", label="Auto Equip Best Trinket",   group="trinket", type="toggle", default=false },
+    { id="autoFuseTrinket",  label="Auto Fuse Trinket",         group="trinket", type="toggle", default=false },
+    { id="autoScrapTrinket", label="Auto Scrap Weak Trinket",   group="trinket", type="toggle", default=false },
+    { id="trinketESP",       label="Trinket ESP",               group="trinket", type="toggle", default=false },
+    { id="trinketNotifier",  label="Trinket Drop Notifier",     group="trinket", type="toggle", default=false },
+    { id="autoReforge",      label="Auto Reforge Trinket",      group="trinket", type="toggle", default=false },
+    { id="tpTrinketExpert",  label="TP Trinket Expert NPC",     group="trinket", type="button"  },
+    { id="tpTrinketRefiner", label="TP Trinket Refiner NPC",    group="trinket", type="button"  },
+
+    -- ── 6. SEA EVENT SYSTEM ──────────────────────────────────
+    { id="autoSeaBeast",     label="Auto Sea Beast",            group="sea",     type="toggle", default=false },
+    { id="autoShipRaid",     label="Auto Ship Raid",            group="sea",     type="toggle", default=false },
+    { id="autoPirateRaid",   label="Auto Pirate Raid",          group="sea",     type="toggle", default=false },
+    { id="autoGhostShip",    label="Auto Ghost Ship",           group="sea",     type="toggle", default=false },
+    { id="autoSeaChest",     label="Auto Sea Chest",            group="sea",     type="toggle", default=false },
+    { id="seaEventFinder",   label="Sea Event Finder",          group="sea",     type="toggle", default=false },
+    { id="seaEventCombat",   label="Sea Event Combat",          group="sea",     type="toggle", default=false },
+    { id="seaEventRewards",  label="Sea Event Rewards",         group="sea",     type="toggle", default=false },
+
+    -- ── 7. FRUIT SYSTEM ──────────────────────────────────────
+    { id="fruitESP",         label="Fruit ESP",                 group="fruit",   type="toggle", default=false },
+    { id="fruitNotifier",    label="Fruit Spawn Notifier",      group="fruit",   type="toggle", default=false },
+    { id="autoCollectFruit", label="Auto Collect Fruit",        group="fruit",   type="toggle", default=false },
+    { id="fruitSniper",      label="Fruit Sniper",              group="fruit",   type="toggle", default=false },
+    { id="autoEatFruit",     label="Auto Eat Fruit",            group="fruit",   type="toggle", default=false },
+    { id="fruitStorage",     label="Fruit Storage Manager",     group="fruit",   type="toggle", default=false },
+    { id="fruitValue",       label="Fruit Value Checker",       group="fruit",   type="toggle", default=false },
+
+    -- ── 8. RAID SYSTEM ───────────────────────────────────────
+    { id="autoBuyChip",      label="Auto Buy Raid Chip",        group="raid",    type="toggle", default=false },
+    { id="autoStartRaid",    label="Auto Start Raid",           group="raid",    type="toggle", default=false },
+    { id="autoCompleteRaid", label="Auto Complete Raid",        group="raid",    type="toggle", default=false },
+    { id="autoRaidFarm",     label="Auto Raid Farm",            group="raid",    type="toggle", default=false },
+    { id="autoAwakening",    label="Auto Awakening",            group="raid",    type="toggle", default=false },
+    { id="raidBossFinder",   label="Raid Boss Finder",          group="raid",    type="toggle", default=false },
+
+    -- ── 9. TELEPORT SYSTEM ───────────────────────────────────
+    { id="tpFirstSea",       label="→ First Sea",               group="tp",      type="button"  },
+    { id="tpSecondSea",      label="→ Second Sea",              group="tp",      type="button"  },
+    { id="tpThirdSea",       label="→ Third Sea",               group="tp",      type="button"  },
+    { id="tpQuestNPC",       label="→ Quest NPC",               group="tp",      type="button"  },
+    { id="tpFruitDealer",    label="→ Fruit Dealer",            group="tp",      type="button"  },
+    { id="tpSwordDealer",    label="→ Sword Dealer",            group="tp",      type="button"  },
+    { id="tpRaidNPC",        label="→ Raid NPC",                group="tp",      type="button"  },
+    { id="tpBoss",           label="→ Boss Location",           group="tp",      type="button"  },
+    { id="tpHotCold",        label="→ Hot & Cold (Rework)",     group="tp",      type="button"  },
+    { id="tpPvPArena",       label="→ PvP Arena (U29)",         group="tp",      type="button"  },
+
+    -- ── 10. ESP / VISUAL ─────────────────────────────────────
+    { id="playerESP",        label="Player ESP",                group="esp",     type="toggle", default=false },
+    { id="npcESP",           label="NPC ESP",                   group="esp",     type="toggle", default=false },
+    { id="bossESP",          label="Boss ESP",                  group="esp",     type="toggle", default=false },
+    { id="fruitESPVis",      label="Fruit ESP Visual",          group="esp",     type="toggle", default=false },
+    { id="chestESP",         label="Chest ESP",                 group="esp",     type="toggle", default=false },
+    { id="islandESP",        label="Island ESP",                group="esp",     type="toggle", default=false },
+    { id="itemESP",          label="Item ESP",                  group="esp",     type="toggle", default=false },
+    { id="distanceDisplay",  label="Distance Display",          group="esp",     type="toggle", default=false },
+    { id="healthDisplay",    label="Health Display",            group="esp",     type="toggle", default=false },
+    { id="trinketESPVis",    label="Trinket ESP Visual",        group="esp",     type="toggle", default=false },
+
+    -- ── 11. PLAYER UTILITY ───────────────────────────────────
+    { id="flyMode",          label="Fly Mode",                  group="player",  type="toggle", default=false },
+    { id="noClip",           label="No Clip",                   group="player",  type="toggle", default=false },
+    { id="walkSpeed",        label="Walk Speed",                group="player",  type="slider", default=16,  min=16,  max=500 },
+    { id="jumpPower",        label="Jump Power",                group="player",  type="slider", default=50,  min=50,  max=500 },
+    { id="infiniteEnergy",   label="Infinite Energy",           group="player",  type="toggle", default=false },
+    { id="infiniteDash",     label="Infinite Dash",             group="player",  type="toggle", default=false },
+    { id="infiniteGeppo",    label="Infinite Geppo",            group="player",  type="toggle", default=false },
+    { id="autoDodge",        label="Auto Dodge",                group="player",  type="toggle", default=false },
+
+    -- ── 12. STATS SYSTEM ─────────────────────────────────────
+    { id="statsMelee",       label="Auto Stats Melee",          group="stats",   type="toggle", default=false },
+    { id="statsDefense",     label="Auto Stats Defense",        group="stats",   type="toggle", default=false },
+    { id="statsSword",       label="Auto Stats Sword",          group="stats",   type="toggle", default=false },
+    { id="statsGun",         label="Auto Stats Gun",            group="stats",   type="toggle", default=false },
+    { id="statsFruit",       label="Auto Stats Fruit",          group="stats",   type="toggle", default=false },
+    { id="smartStats",       label="Smart Stat Allocation",     group="stats",   type="toggle", default=false },
+
+    -- ── 13. SERVER SYSTEM ────────────────────────────────────
+    { id="serverHop",        label="Server Hop",                group="server",  type="toggle", default=false },
+    { id="autoRejoin",       label="Auto Rejoin",               group="server",  type="toggle", default=false },
+    { id="findLowServer",    label="Find Low Player Server",    group="server",  type="button"  },
+    { id="findBossServer",   label="Find Boss Server",          group="server",  type="button"  },
+    { id="findEventServer",  label="Find Event Server",         group="server",  type="button"  },
+    { id="findDungeonServer",label="Find Dungeon Server",       group="server",  type="button"  },
+
+    -- ── 14. MISC UTILITIES ───────────────────────────────────
+    { id="autoChest",        label="Auto Chest",                group="misc",    type="toggle", default=false },
+    { id="saberQuest",       label="Auto Saber Quest",          group="misc",    type="toggle", default=false },
+    { id="tushitaQuest",     label="Auto Tushita Quest",        group="misc",    type="toggle", default=false },
+    { id="yamaQuest",        label="Auto Yama Quest",           group="misc",    type="toggle", default=false },
+    { id="cdkQuest",         label="Auto CDK Quest",            group="misc",    type="toggle", default=false },
+    { id="mirrorFractal",    label="Auto Mirror Fractal",       group="misc",    type="toggle", default=false },
+    { id="antiAFK",          label="Anti AFK",                  group="misc",    type="toggle", default=true  },
+    { id="antiKick",         label="Anti Kick",                 group="misc",    type="toggle", default=false },
+    { id="fpsBoost",         label="FPS Boost",                 group="misc",    type="toggle", default=false },
+    { id="lagReducer",       label="Lag Reducer",               group="misc",    type="toggle", default=false },
+
+    -- ── 15. SETTINGS ─────────────────────────────────────────
+    { id="saveConfig",       label="Save Config",               group="cfg",     type="button"  },
+    { id="loadConfig",       label="Load Config",               group="cfg",     type="button"  },
+    { id="resetConfig",      label="Reset Config",              group="cfg",     type="button"  },
+    { id="uiTheme",          label="UI Theme Switch",           group="cfg",     type="button"  },
+    { id="keybindManager",   label="Keybind Manager",           group="cfg",     type="toggle", default=false },
+}
+
+-- Index nhanh theo id
+Core._ById = {}
+for _, feat in ipairs(Core.Registry) do
+    Core._ById[feat.id] = feat
 end
 
 -- ============================================================
---  BẮT ĐẦU LOAD
+--  KHỞI TẠO
 -- ============================================================
-SetProgress(0,"Khởi động Phantom Hub...")
-task.wait(0.2)
-Tween(LoadBox,{Position=UDim2.new(0.5,-190,0.5,-135),BackgroundTransparency=0},
-    0.5,Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-task.wait(0.55)
-SetProgress(5,"Kết nối GitHub...")
-task.wait(0.2)
-
-local Loaded={}
-for _,mod in ipairs(MODULES) do
-    SetProgress(mod.pct-5,"Đang tải "..mod.name.."...")
-    task.wait(0.05)
-    local r=SafeLoad(mod.url,mod.name)
-    if r then
-        Loaded[mod.name]=r
-        SetProgress(mod.pct,mod.name.." ✓")
-    elseif mod.required then
-        SetProgress(mod.pct,"❌ LỖI: "..mod.name.." thất bại!")
-        task.wait(2); LoadGui:Destroy(); _G.PhantomHub_Loaded=false; return
-    else
-        SetProgress(mod.pct,mod.name.." — bỏ qua")
+function Core.Init()
+    for _, feat in ipairs(Core.Registry) do
+        if feat.type == "toggle" then
+            Core.State.ActiveToggles[feat.id] = feat.default or false
+        elseif feat.type == "slider" then
+            Core.State.SliderValues[feat.id] = feat.default or 0
+        end
     end
-    task.wait(0.1)
+    Core.Log("Core khởi tạo xong — Update 29 ready.", "info")
 end
 
-SetProgress(98,"Khởi tạo modules...")
-task.wait(0.15)
+-- ============================================================
+--  GETTER / SETTER
+-- ============================================================
+function Core.IsOn(id: string): boolean
+    return Core.State.ActiveToggles[id] == true
+end
+
+function Core.Toggle(id: string)
+    local feat = Core._ById[id]
+    if not feat or feat.type ~= "toggle" then return end
+    local newVal = not Core.State.ActiveToggles[id]
+    Core.State.ActiveToggles[id] = newVal
+    Core.Log(feat.label .. (newVal and " BẬT" or " TẮT"),
+        newVal and "success" or "info")
+    if Core._Callbacks[id] then Core._Callbacks[id](newVal) end
+end
+
+function Core.GetSlider(id: string): number
+    return Core.State.SliderValues[id] or 0
+end
+
+function Core.SetSlider(id: string, value: number)
+    local feat = Core._ById[id]
+    if not feat or feat.type ~= "slider" then return end
+    Core.State.SliderValues[id] = math.clamp(value, feat.min, feat.max)
+end
+
+function Core.GetActiveCount(): number
+    local n = 0
+    for _, v in pairs(Core.State.ActiveToggles) do
+        if v then n += 1 end
+    end
+    return n
+end
 
 -- ============================================================
---  KHỞI TẠO — gọi đúng cách, KHÔNG dùng pcall kiểu sai
+--  CALLBACK SYSTEM
 -- ============================================================
-local Core    = Loaded["Core"]
-local UI      = Loaded["UI"]
-local Systems = Loaded["Systems"]
-local Network = Loaded["Network"]
-local Visual  = Loaded["Visual"]
-local Phantom = Loaded["Phantom"]
+Core._Callbacks = {}
+function Core.OnToggle(id: string, fn: (boolean) -> ())
+    Core._Callbacks[id] = fn
+end
 
--- Core init trước
-Core.Init()
-Core.LoadConfig()
+-- ============================================================
+--  ACTIVITY LOG
+-- ============================================================
+function Core.Log(msg: string, level: string?)
+    level = level or "info"
+    local entry = { time = os.date("%H:%M:%S"), msg = msg, level = level }
+    table.insert(Core.State.Log, 1, entry)
+    if #Core.State.Log > 200 then
+        table.remove(Core.State.Log, #Core.State.Log)
+    end
+    local prefix = level == "success" and "[✓]"
+               or  level == "warn"    and "[!]" or "[i]"
+    print(string.format("[PhantomHub %s] %s %s", entry.time, prefix, msg))
+end
 
--- Systems: gọi trực tiếp Systems.Init(Core) — KHÔNG dùng pcall(Systems.Init, Systems, Core)
-if Systems and type(Systems.Init) == "function" then
-    local ok, err = pcall(function() Systems.Init(Core) end)
+-- ============================================================
+--  CONFIG I/O
+-- ============================================================
+function Core.SaveConfig()
+    local data = { toggles = Core.State.ActiveToggles, sliders = Core.State.SliderValues }
+    local ok, encoded = pcall(HttpService.JSONEncode, HttpService, data)
     if ok then
-        AddLog("✓ Systems.Init xong",Color3.fromRGB(0,255,136))
+        writefile(CONFIG_FILE, encoded)
+        Core.Log("Config đã lưu → " .. CONFIG_FILE, "success")
     else
-        AddLog("⚠ Systems.Init lỗi: "..tostring(err),Color3.fromRGB(255,140,0))
-        warn("[PhantomHub] Systems.Init error: "..tostring(err))
+        Core.Log("Lỗi lưu config: " .. tostring(encoded), "warn")
     end
 end
 
-if Network and type(Network.Init) == "function" then
-    local ok, err = pcall(function() Network.Init(Core) end)
-    if not ok then warn("[PhantomHub] Network.Init error: "..tostring(err)) end
+function Core.LoadConfig()
+    local ok, raw = pcall(readfile, CONFIG_FILE)
+    if not ok or not raw or raw == "" then
+        Core.Log("Không tìm thấy config, dùng mặc định.", "info")
+        return
+    end
+    local parsed = HttpService:JSONDecode(raw)
+    if parsed.toggles then
+        for k, v in pairs(parsed.toggles) do Core.State.ActiveToggles[k] = v end
+    end
+    if parsed.sliders then
+        for k, v in pairs(parsed.sliders) do Core.State.SliderValues[k] = v end
+    end
+    Core.Log("Config đã tải từ " .. CONFIG_FILE, "success")
 end
 
-if Visual and type(Visual.Init) == "function" then
-    local ok, err = pcall(function() Visual.Init(Core) end)
-    if not ok then warn("[PhantomHub] Visual.Init error: "..tostring(err)) end
+function Core.ResetConfig()
+    Core.Init()
+    pcall(delfile, CONFIG_FILE)
+    Core.Log("Config đã reset.", "warn")
 end
 
-if Phantom and type(Phantom) == "table" and type(Phantom.Init) == "function" then
-    local ok, err = pcall(function() Phantom.Init(Core) end)
-    if not ok then warn("[PhantomHub] Phantom.Init error: "..tostring(err)) end
+function Core.GetGroup(group: string): { any }
+    local result = {}
+    for _, feat in ipairs(Core.Registry) do
+        if feat.group == group then table.insert(result, feat) end
+    end
+    return result
 end
 
--- UI build sau cùng
-UI.Build(Core)
-
-SetProgress(100,"PHANTOM HUB sẵn sàng! 🎉")
-task.wait(0.45)
-
--- Đóng loading
-Tween(LoadBox,{Position=UDim2.new(0.5,-190,0.42,-135)},0.4,
-    Enum.EasingStyle.Back,Enum.EasingDirection.In)
-Tween(Overlay,{BackgroundTransparency=1},0.45,Enum.EasingStyle.Quad,Enum.EasingDirection.In)
-task.wait(0.5)
-LoadGui:Destroy()
-
-Core.Log("PHANTOM HUB v4.2.1 sẵn sàng!","success")
-
--- ============================================================
---  TOGGLE BUTTON NỔI
--- ============================================================
-local ToggleGui=Create("ScreenGui",{Name="PhantomToggle",ResetOnSpawn=false,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,Parent=PlayerGui})
-
-local ToggleBtn=Create("TextButton",{
-    Size=UDim2.new(0,44,0,44),Position=UDim2.new(1,-58,0.5,-22),
-    BackgroundColor3=Color3.fromRGB(10,8,20),BorderSizePixel=0,
-    Text="👻",TextSize=20,Font=Enum.Font.GothamBold,ZIndex=100,Parent=ToggleGui})
-Create("UICorner",{CornerRadius=UDim.new(1,0),Parent=ToggleBtn})
-local TStroke=Create("UIStroke",{Color=Color3.fromRGB(0,255,136),Thickness=2,Parent=ToggleBtn})
-
-local Tip=Create("TextLabel",{
-    Size=UDim2.new(0,110,0,20),Position=UDim2.new(-1.4,0,0.5,-10),
-    BackgroundColor3=Color3.fromRGB(10,8,20),BackgroundTransparency=0.15,
-    BorderSizePixel=0,Text="RightCtrl / Click",
-    TextColor3=Color3.fromRGB(0,255,136),TextSize=8,Font=Enum.Font.Code,
-    Visible=false,ZIndex=101,Parent=ToggleBtn})
-Create("UICorner",{CornerRadius=UDim.new(0,4),Parent=Tip})
-ToggleBtn.MouseEnter:Connect(function() Tip.Visible=true end)
-ToggleBtn.MouseLeave:Connect(function() Tip.Visible=false end)
-
-local pulsing=true
-task.spawn(function()
-    while pulsing do
-        Tween(TStroke,{Thickness=4,Color=Color3.fromRGB(0,255,180)},0.7)
-        task.wait(0.7)
-        Tween(TStroke,{Thickness=1.5,Color=Color3.fromRGB(0,100,60)},0.7)
-        task.wait(0.7)
-    end
-end)
-
-local td,tds,tdp=false,nil,nil
-ToggleBtn.InputBegan:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 then
-        td=true; tds=i.Position; tdp=ToggleBtn.Position end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if td and i.UserInputType==Enum.UserInputType.MouseMovement then
-        local d=i.Position-tds
-        ToggleBtn.Position=UDim2.new(tdp.X.Scale,tdp.X.Offset+d.X,tdp.Y.Scale,tdp.Y.Offset+d.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 then td=false end
-end)
-
-local hubVisible=true
-local function ToggleHub()
-    if not UI._Main then return end
-    hubVisible=not hubVisible
-    if hubVisible then
-        UI._Main.Visible=true
-        UI._Main.Position=UDim2.new(0.5,-280,0.6,-200)
-        Tween(UI._Main,{Position=UDim2.new(0.5,-280,0.5,-200)},
-            0.4,Enum.EasingStyle.Back,Enum.EasingDirection.Out)
-        Tween(TStroke,{Color=Color3.fromRGB(255,80,80)},0.2)
-        ToggleBtn.Text="✕"
-    else
-        Tween(UI._Main,{Position=UDim2.new(0.5,-280,0.62,-200)},
-            0.3,Enum.EasingStyle.Quad,Enum.EasingDirection.In)
-        task.delay(0.3,function() if UI._Main then UI._Main.Visible=false end end)
-        Tween(TStroke,{Color=Color3.fromRGB(0,255,136)},0.2)
-        ToggleBtn.Text="👻"
-    end
-end
-
-ToggleBtn.MouseButton1Click:Connect(ToggleHub)
-UserInputService.InputBegan:Connect(function(i,gp)
-    if not gp and i.KeyCode==Enum.KeyCode.RightControl then ToggleHub() end
-end)
-
--- ============================================================
---  VÒNG LẶP CHÍNH
--- ============================================================
-local _conn=RunService.Heartbeat:Connect(function(dt)
-    if not Core.State.Running then return end
-    if Systems and type(Systems.Tick)=="function" then
-        local ok,err=pcall(function() Systems.Tick(dt) end)
-        if not ok then warn("[Systems.Tick] "..tostring(err)) end
-    end
-    if Network and type(Network.Tick)=="function" then
-        pcall(function() Network.Tick(dt) end) end
-    if Visual and type(Visual.Tick)=="function" then
-        pcall(function() Visual.Tick(dt) end) end
-    if Phantom and type(Phantom)=="table" and type(Phantom.Tick)=="function" then
-        pcall(function() Phantom.Tick(dt) end) end
-end)
-
-LocalPlayer.AncestryChanged:Connect(function()
-    if not LocalPlayer.Parent then
-        pulsing=false
-        Core.State.Running=false
-        Core.SaveConfig()
-        _conn:Disconnect()
-        if Visual and type(Visual.Cleanup)=="function" then pcall(function() Visual.Cleanup() end) end
-        if UI then UI.Cleanup() end
-        if ToggleGui then ToggleGui:Destroy() end
-        _G.PhantomHub_Loaded=false
-    end
-end)
+return Core
 
