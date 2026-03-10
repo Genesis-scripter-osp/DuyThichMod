@@ -1,7 +1,7 @@
 -- ============================================================
---  PHANTOM HUB  |  systems.lua
---  Cập nhật: Blox Fruits Update 29 (Control Update - 23/12/2025)
---  Thêm: Dungeon System · Trinket Farm · PvP Arena · Control Rework
+--  PHANTOM HUB  |  systems.lua  v4.3.0
+--  Fix: Auto Farm tấn công thực · Auto Boss · Teleport · ESP
+--  Blox Fruits Update 29
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -9,6 +9,8 @@ local RunService        = game:GetService("RunService")
 local Workspace         = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser       = game:GetService("VirtualUser")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Core
@@ -16,47 +18,162 @@ local Core
 local Systems = {}
 
 -- ============================================================
---  TIỆN ÍCH NỘI BỘ
+--  TIỆN ÍCH
 -- ============================================================
-local function GetChar(): (Model?, BasePart?)
+local function GetChar()
     local c = LocalPlayer.Character
     if not c then return nil, nil end
     return c, c:FindFirstChild("HumanoidRootPart")
 end
 
-local function GetHumanoid(): Humanoid?
+local function GetHum()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
-local function TeleportTo(pos: Vector3)
+local function TeleportTo(pos)
     local _, hrp = GetChar()
-    if hrp then hrp.CFrame = CFrame.new(pos) end
+    if hrp then
+        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+    end
 end
 
-local function DistanceTo(pos: Vector3): number
+local function DistanceTo(pos)
     local _, hrp = GetChar()
     if not hrp then return math.huge end
     return (hrp.Position - pos).Magnitude
 end
 
-local function FindNearestNPC(names: {string}, maxDist: number?): (Model?, Vector3?)
-    maxDist = maxDist or 500
+-- ============================================================
+--  TÌM REMOTE EVENT ĐÚNG CÁCH (Blox Fruits Update 29)
+--  Blox Fruits dùng RemoteEvent trong ReplicatedStorage
+-- ============================================================
+local RemoteCache = {}
+local function GetRemote(name)
+    if RemoteCache[name] then return RemoteCache[name] end
+    -- Tìm đệ quy trong ReplicatedStorage
+    local r = ReplicatedStorage:FindFirstChild(name, true)
+    if r then RemoteCache[name] = r; return r end
+    return nil
+end
+
+local function FireRemote(name, ...)
+    local r = GetRemote(name)
+    if r and r:IsA("RemoteEvent") then
+        pcall(r.FireServer, r, ...)
+    end
+end
+
+local function InvokeRemote(name, ...)
+    local r = GetRemote(name)
+    if r and r:IsA("RemoteFunction") then
+        local ok, res = pcall(r.InvokeServer, r, ...)
+        if ok then return res end
+    end
+end
+
+-- ============================================================
+--  TẤN CÔNG MOB — Blox Fruits Update 29
+--  Dùng nhiều phương pháp để đảm bảo hit
+-- ============================================================
+local function AttackMob(mob)
+    if not mob or not mob.Parent then return end
+    local hum = mob:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+
+    local root = mob:FindFirstChild("HumanoidRootPart")
+        or mob:FindFirstChild("Root")
+        or mob:FindFirstChild("Torso")
+    if not root then return end
+
+    local _, hrp = GetChar()
+    if not hrp then return end
+
+    -- Teleport sát mob
+    hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 2, 0))
+        * CFrame.Angles(0, math.rad(180), 0)
+
+    -- Phương pháp 1: Simulate click (đánh tay)
+    local tool = LocalPlayer.Character and
+        LocalPlayer.Character:FindFirstChildOfClass("Tool")
+
+    if tool then
+        -- Kích hoạt tool (vũ khí)
+        local activated = tool:FindFirstChild("Activated")
+            or tool:FindFirstChildOfClass("LocalScript")
+        -- FireServer nếu có handle
+        local handle = tool:FindFirstChild("Handle")
+        if handle then
+            -- Tấn công bằng cách fire tool remote
+            pcall(function()
+                tool:Activate()
+            end)
+        end
+    end
+
+    -- Phương pháp 2: VirtualUser click vào mob
+    pcall(function()
+        local camera = workspace.CurrentCamera
+        if camera then
+            local screenPos, onScreen = camera:WorldToScreenPoint(root.Position)
+            if onScreen then
+                VirtualUser:Button1Down(Vector2.new(screenPos.X, screenPos.Y), camera.CFrame)
+                task.wait(0.05)
+                VirtualUser:Button1Up(Vector2.new(screenPos.X, screenPos.Y), camera.CFrame)
+            end
+        end
+    end)
+
+    -- Phương pháp 3: FireRemote damage trực tiếp (Update 29)
+    pcall(function()
+        -- Blox Fruits Update 29 remote names
+        FireRemote("Damage", mob, 1)
+        FireRemote("DamageCharacter", mob)
+        FireRemote("HitCharacter", mob, root.Position)
+    end)
+end
+
+-- ============================================================
+--  TÌM MOB GẦN NHẤT
+-- ============================================================
+local FARM_MOBS = {
+    -- Sea 1
+    "Military Soldier","Pirate","Bandit","Desert Bandit",
+    "Monkey","Gorilla","Toga Warrior","Saber Expert",
+    "Brute","Bobby","Yeti","Snow Bandit",
+    -- Sea 2
+    "Galley Pirate","Tough Cookie","Zombie","Vampire",
+    "Snow Trooper","Ship Crew","Fishman","Shark",
+    "Wysper","Thunder God","Smoker",
+    -- Sea 3
+    "Forest Pirate","Jungle Pirate","Sea Soldier",
+    "Dark Pirate","Magma Ninja","Dragon Crew",
+    "Longma","Buso Haki Warrior","Raid Soldier",
+}
+
+local function FindNearestMob(maxDist)
+    maxDist = maxDist or 800
     local best, bestDist, bestPos = nil, maxDist, nil
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("Model") then
             local hum = obj:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                for _, name in ipairs(names) do
-                    if obj.Name:lower():find(name:lower()) then
-                        local root = obj:FindFirstChild("HumanoidRootPart")
-                        if root then
-                            local d = DistanceTo(root.Position)
-                            if d < bestDist then
-                                best, bestDist, bestPos = obj, d, root.Position
-                            end
+            if hum and hum.Health > 0 and obj ~= LocalPlayer.Character then
+                local root = obj:FindFirstChild("HumanoidRootPart")
+                    or obj:FindFirstChild("Torso")
+                if root then
+                    local d = DistanceTo(root.Position)
+                    if d < bestDist then
+                        -- Cek nama mob
+                        local isMob = false
+                        for _, name in ipairs(FARM_MOBS) do
+                            if obj.Name:find(name) then isMob=true; break end
                         end
-                        break
+                        -- Jika tidak ada di list, tetap farm jika ada humanoid
+                        -- (untuk kompatibilitas semua island)
+                        if not isMob and hum.MaxHealth <= 5000 then isMob = true end
+                        if isMob then
+                            best, bestDist, bestPos = obj, d, root.Position
+                        end
                     end
                 end
             end
@@ -65,649 +182,486 @@ local function FindNearestNPC(names: {string}, maxDist: number?): (Model?, Vecto
     return best, bestPos
 end
 
-local function FireRemote(name: string, ...)
-    local remote = ReplicatedStorage:FindFirstChild(name, true)
-    if remote and remote:IsA("RemoteEvent") then
-        remote:FireServer(...)
-    end
-end
-
-local function InvokeRemote(name: string, ...): any
-    local remote = ReplicatedStorage:FindFirstChild(name, true)
-    if remote and remote:IsA("RemoteFunction") then
-        return remote:InvokeServer(...)
-    end
-end
-
 -- ============================================================
---  MODULE: Auto Farm Engine
+--  AUTO FARM ENGINE
 -- ============================================================
 local FarmEngine = {}
 FarmEngine._target = nil
 FarmEngine._timer  = 0
+FarmEngine._atkTimer = 0
 
-local QUEST_NPCS = {
-    "Military Soldier", "Pirate", "Bandit", "Desert Bandit",
-    "Sky Bandit", "Dark Master", "Snow Bandit", "Galley Pirate",
-    "Monkey", "Gorilla", "Toga Warrior", "Saber Expert"
-}
-
-function FarmEngine.Tick(dt: number)
+function FarmEngine.Tick(dt)
     if not Core.IsOn("autoFarm") then return end
+
     FarmEngine._timer += dt
-    if FarmEngine._timer < 0.1 then return end
-    FarmEngine._timer = 0
+    FarmEngine._atkTimer += dt
 
-    local c, hrp = GetChar()
-    if not c or not hrp then return end
-    local hum = GetHumanoid()
-    if not hum or hum.Health <= 0 then return end
+    -- Cari target baru setiap 0.3s
+    if FarmEngine._timer >= 0.3 then
+        FarmEngine._timer = 0
 
-    if not FarmEngine._target or not FarmEngine._target.Parent
-        or not FarmEngine._target:FindFirstChildOfClass("Humanoid")
-        or FarmEngine._target:FindFirstChildOfClass("Humanoid").Health <= 0 then
+        -- Cek apakah target masih valid
+        if FarmEngine._target then
+            local hum = FarmEngine._target:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 or not FarmEngine._target.Parent then
+                Core.Stats.MobsKilled = (Core.Stats.MobsKilled or 0) + 1
+                FarmEngine._target = nil
+            end
+        end
 
-        FarmEngine._target = nil
-        local names = Core.IsOn("farmMobCluster") and QUEST_NPCS or { "Bandit", "Pirate" }
-        local mob, pos = FindNearestNPC(names, Core.IsOn("fastFarm") and 1000 or 400)
-        FarmEngine._target = mob
-        if mob and pos and DistanceTo(pos) > 20 then
-            TeleportTo(pos + Vector3.new(0, 3, 0))
+        -- Cari target baru
+        if not FarmEngine._target then
+            local mob, pos = FindNearestMob()
+            FarmEngine._target = mob
         end
     end
 
-    if FarmEngine._target then
-        local root = FarmEngine._target:FindFirstChild("HumanoidRootPart")
-        if root then
-            if DistanceTo(root.Position) > 15 then
-                TeleportTo(root.Position + Vector3.new(0, 3, 0))
-            end
-            hrp.CFrame = CFrame.lookAt(hrp.Position, root.Position)
-            if Core.IsOn("autoClick") then mouse1click() end
-        end
+    -- Serang target setiap 0.15s
+    if FarmEngine._atkTimer >= 0.15 and FarmEngine._target then
+        FarmEngine._atkTimer = 0
+        AttackMob(FarmEngine._target)
     end
 end
 
 -- ============================================================
---  MODULE: Combat System
+--  AUTO QUEST
 -- ============================================================
-local Combat = {}
-Combat._skillTimer = { Z=0, X=0, C=0, V=0, F=0 }
-Combat._skillDelay = { Z=2, X=3, C=4, V=5, F=8 }
-
-function Combat.Tick(dt: number)
-    if Core.IsOn("fastAttack") or Core.IsOn("noDelay") then
-        local hum = GetHumanoid()
-        if hum then hum.WalkSpeed = Core.IsOn("fastAttack") and 28 or hum.WalkSpeed end
-    end
-
-    local skillMap = { Z="autoSkillZ", X="autoSkillX", C="autoSkillC", V="autoSkillV", F="autoSkillF" }
-    for key, featureId in pairs(skillMap) do
-        if Core.IsOn(featureId) then
-            Combat._skillTimer[key] = (Combat._skillTimer[key] or 0) + dt
-            if Combat._skillTimer[key] >= Combat._skillDelay[key] then
-                Combat._skillTimer[key] = 0
-                keypress(string.byte(key))
-                task.delay(0.05, function() keyrelease(string.byte(key)) end)
-            end
-        end
-    end
-
-    if Core.IsOn("autoHaki") then FireRemote("Haki", "Armament", true) end
-
-    if Core.IsOn("expandHitbox") then
-        local mult = Core.GetSlider("expandHitbox")
-        for _, desc in ipairs(Workspace:GetDescendants()) do
-            if desc:IsA("Model") and desc ~= LocalPlayer.Character then
-                local hum = desc:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    local root = desc:FindFirstChild("HumanoidRootPart")
-                    if root and root:IsA("BasePart") then
-                        root.Size = Vector3.new(mult * 5, mult * 5, mult * 5)
-                    end
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Boss System
--- ============================================================
-local BossSystem = {}
-BossSystem._timer = 0
-
-local BOSS_MAP = {
-    autoDarkbeard  = { "Darkbeard" },
-    autoRipIndra   = { "Rip_Indra", "Rip Indra" },
-    autoDoughKing  = { "Dough King" },
-    autoSoulReaper = { "Soul Reaper" },
-    autoBoss       = { "Gorilla King", "Bobby", "Yeti", "Snow Lurker", "Greybeard", "Dragon" },
-    autoEliteBoss  = { "Stone", "Island Empress", "Kilo Admiral", "Tide Keeper" },
+local QUEST_NPCS = {
+    -- Sea 1
+    {name="Quest Giver", pos=Vector3.new(941.3, 19.5, 750.4)},
+    {name="Military Detective", pos=Vector3.new(267, 8, 1580)},
+    {name="Pirate Greeter", pos=Vector3.new(-1320, 5, 103)},
+    -- Sea 2
+    {name="Greybeard", pos=Vector3.new(-230, 128, 4600)},
+    {name="Quest Giver", pos=Vector3.new(-3500, 5, 3640)},
+    -- Sea 3
+    {name="Mythological Pirate", pos=Vector3.new(-6800, 5, 1800)},
+    {name="Dragonborn", pos=Vector3.new(-8500, 5, -3000)},
 }
 
-function BossSystem.Tick(dt: number)
-    BossSystem._timer += dt
-    if BossSystem._timer < 0.5 then return end
-    BossSystem._timer = 0
-
-    local c, hrp = GetChar()
-    if not c or not hrp then return end
-    local hum = GetHumanoid()
-    if not hum or hum.Health <= 0 then return end
-
-    for featureId, names in pairs(BOSS_MAP) do
-        if Core.IsOn(featureId) then
-            local boss, pos = FindNearestNPC(names, 2000)
-            if boss and pos then
-                if DistanceTo(pos) > 30 then TeleportTo(pos + Vector3.new(0, 5, 0)) end
-                hrp.CFrame = CFrame.lookAt(hrp.Position, pos)
-                if Core.IsOn("autoClick") then mouse1click() end
-            else
-                if Core.IsOn("bossServerHop") then
-                    Core.Log("Boss không spawn — đợi server hop...", "warn")
-                end
-            end
-            break
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Dungeon System (MỚI - Update 29)
---  - 15 tầng (floor), sau mỗi 5 tầng có boss
---  - 4 độ khó: Normal(Lv500) / Hard(Lv1000) / Nightmare(Lv1800) / Inferno(Lv2400)
---  - Stat points bị cân bằng trong dungeon (không quan trọng)
---  - Reward: Trinkets, Cash, Simulation Data
--- ============================================================
-local DungeonSystem = {}
-DungeonSystem._timer       = 0
-DungeonSystem._floor       = 0
-DungeonSystem._inDungeon   = false
-DungeonSystem._difficultyMap = {
-    dungeonNormal    = "Normal",
-    dungeonHard      = "Hard",
-    dungeonNightmare = "Nightmare",
-    dungeonInferno   = "Inferno",
-}
-
-local function GetDungeonDifficulty(): string?
-    for featureId, diffName in pairs(DungeonSystem._difficultyMap) do
-        if Core.IsOn(featureId) then return diffName end
-    end
-    return nil
-end
-
-local function EnterDungeon(difficulty: string)
-    -- Tìm Lucian NPC để vào dungeon (Sea 2 & Sea 3)
-    local lucianNames = { "Lucian", "Dungeon Portal", "Realm Teleporter" }
-    local npc, pos = FindNearestNPC(lucianNames, 5000)
-
-    if npc and pos then
-        TeleportTo(pos + Vector3.new(3, 0, 0))
-        task.wait(0.5)
-        FireRemote("EnterDungeon", difficulty)
-        Core.Log("Vào Dungeon " .. difficulty .. "...", "success")
-        DungeonSystem._inDungeon = true
-        DungeonSystem._floor = 0
-    else
-        -- Thử dùng Realm Teleporter trong Server Browser
-        FireRemote("OpenRealmTeleporter")
-        task.wait(0.3)
-        FireRemote("EnterDungeonFromBrowser", difficulty)
-        Core.Log("Dùng Realm Teleporter → Dungeon " .. difficulty, "info")
-        DungeonSystem._inDungeon = true
-    end
-end
-
-local function ClearDungeonFloor()
-    local c, hrp = GetChar()
-    if not c or not hrp then return end
-
-    -- Tìm tất cả enemy trong dungeon
-    local enemyNames = { "Dungeon Enemy", "Floor Enemy", "Dungeon Mob", "Realm Enemy" }
-    local enemy, pos = FindNearestNPC(enemyNames, 300)
-
-    if enemy and pos then
-        if DistanceTo(pos) > 20 then TeleportTo(pos + Vector3.new(0, 3, 0)) end
-        hrp.CFrame = CFrame.lookAt(hrp.Position, pos)
-        if Core.IsOn("autoClick") then mouse1click() end
-    else
-        -- Tầng sạch — lên tầng tiếp theo
-        DungeonSystem._floor += 1
-        Core.Log("Tầng " .. DungeonSystem._floor .. " hoàn thành!", "success")
-        FireRemote("NextDungeonFloor")
-    end
-end
-
-local function PickPowerUpCard()
-    if not Core.IsOn("autoPickPowerUp") then return end
-    -- Tự động chọn power-up card tốt nhất (ưu tiên damage > defense > speed)
-    local priority = { "Damage", "CritRate", "Speed", "Defense", "Energy" }
-    for _, cardType in ipairs(priority) do
-        local ok = pcall(FireRemote, "SelectPowerUpCard", cardType)
-        if ok then
-            Core.Log("Chọn Power-Up Card: " .. cardType, "success")
-            break
-        end
-    end
-end
-
-local function CollectDungeonReward()
-    if not Core.IsOn("autoCollectReward") then return end
-    FireRemote("ClaimDungeonReward")
-    Core.State.Stats.DungeonRuns += 1
-    Core.Log("Dungeon run #" .. Core.State.Stats.DungeonRuns .. " hoàn thành!", "success")
-    DungeonSystem._inDungeon = false
-    DungeonSystem._floor = 0
-end
-
-function DungeonSystem.Tick(dt: number)
-    if not Core.IsOn("autoDungeon") then return end
-
-    DungeonSystem._timer += dt
-    if DungeonSystem._timer < 0.3 then return end
-    DungeonSystem._timer = 0
-
-    local c, hrp = GetChar()
-    if not c or not hrp then return end
-    local hum = GetHumanoid()
-    if not hum or hum.Health <= 0 then return end
-
-    -- Chưa trong dungeon → vào dungeon
-    if not DungeonSystem._inDungeon then
-        local diff = GetDungeonDifficulty()
-        if not diff then diff = "Normal" end
-        EnterDungeon(diff)
-        return
-    end
-
-    -- Đang trong dungeon
-    if Core.IsOn("autoClearFloors") then
-        -- Kiểm tra có đến boss tầng chưa (tầng 5, 10, 15)
-        if DungeonSystem._floor > 0 and DungeonSystem._floor % 5 == 0
-            and Core.IsOn("dungeonBossKill") then
-            -- Boss floor: tìm và giết boss dungeon
-            local bossNames = { "Floor Boss", "Dungeon Boss", "Realm Guardian" }
-            local boss, pos = FindNearestNPC(bossNames, 500)
-            if boss and pos then
-                if DistanceTo(pos) > 25 then TeleportTo(pos + Vector3.new(0, 5, 0)) end
-                hrp.CFrame = CFrame.lookAt(hrp.Position, pos)
-                if Core.IsOn("autoClick") then mouse1click() end
-            end
-        else
-            ClearDungeonFloor()
-        end
-
-        -- Power-up card sau mỗi tầng
-        PickPowerUpCard()
-
-        -- Tầng 15 = hoàn thành
-        if DungeonSystem._floor >= 15 then
-            CollectDungeonReward()
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Trinket System (MỚI - Update 29)
---  - Trinkets: equippable RPG gear, stat buff thụ động
---  - Nhận từ Dungeon (Normal→Common, Hard→Rare, Nightmare→Epic, Inferno→Mythical)
---  - Fuse: ghép 2 trinket cùng loại → mạnh hơn
---  - Scrap: phá trinket yếu → lấy Simulation Data (tiền tệ dungeon)
---  - Reforge: thay đổi modifier của trinket
--- ============================================================
-local TrinketSystem = {}
-TrinketSystem._timer = 0
-
-local TRINKET_STATS = { "MeleeDmg", "SwordStat", "CooldownReduction", "Armor", "OverflowHealth", "EnergyRegen" }
-
-local function GetTrinketInventory(): { any }
-    -- Lấy danh sách trinket trong inventory
-    local inv = {}
-    local data = LocalPlayer:FindFirstChild("Data") or LocalPlayer:FindFirstChild("PlayerData")
-    if data then
-        local trinkets = data:FindFirstChild("Trinkets")
-        if trinkets then
-            for _, t in ipairs(trinkets:GetChildren()) do
-                table.insert(inv, t)
-            end
-        end
-    end
-    return inv
-end
-
-local function GetBestTrinket(trinkets: { any }): any?
-    -- So sánh theo rarity: Mythical > Epic > Rare > Common
-    local rarityScore = { Common=1, Rare=2, Epic=3, Legendary=4, Mythical=5 }
-    local best, bestScore = nil, 0
-    for _, t in ipairs(trinkets) do
-        local rarity = t:FindFirstChild("Rarity")
-        local score  = rarity and (rarityScore[rarity.Value] or 0) or 0
-        if score > bestScore then best, bestScore = t, score end
-    end
-    return best
-end
-
-function TrinketSystem.Tick(dt: number)
-    TrinketSystem._timer += dt
-    if TrinketSystem._timer < 2 then return end
-    TrinketSystem._timer = 0
-
-    local trinkets = GetTrinketInventory()
-    if #trinkets == 0 then return end
-
-    -- Auto Equip Best Trinket
-    if Core.IsOn("autoEquipTrinket") then
-        local best = GetBestTrinket(trinkets)
-        if best then
-            FireRemote("EquipTrinket", best.Name)
-            Core.Log("Trang bị Trinket: " .. best.Name, "success")
-        end
-    end
-
-    -- Auto Fuse Trinket — ghép 2 trinket cùng loại
-    if Core.IsOn("autoFuseTrinket") and #trinkets >= 2 then
-        -- Nhóm theo loại
-        local groups: { [string]: { any } } = {}
-        for _, t in ipairs(trinkets) do
-            local tType = t:FindFirstChild("Type")
-            if tType then
-                groups[tType.Value] = groups[tType.Value] or {}
-                table.insert(groups[tType.Value], t)
-            end
-        end
-        for tType, group in pairs(groups) do
-            if #group >= 2 then
-                FireRemote("FuseTrinket", group[1].Name, group[2].Name)
-                Core.State.Stats.TrinketsFound += 1
-                Core.Log("Fuse Trinket: " .. tType, "success")
-                break
-            end
-        end
-    end
-
-    -- Auto Scrap Weak Trinket (Common rarity)
-    if Core.IsOn("autoScrapTrinket") then
-        for _, t in ipairs(trinkets) do
-            local rarity = t:FindFirstChild("Rarity")
-            if rarity and rarity.Value == "Common" then
-                FireRemote("ScrapTrinket", t.Name)
-                Core.Log("Scrap Trinket Common: " .. t.Name, "info")
-            end
-        end
-    end
-
-    -- Auto Reforge Trinket
-    if Core.IsOn("autoReforge") then
-        for _, t in ipairs(trinkets) do
-            local rarity = t:FindFirstChild("Rarity")
-            if rarity and (rarity.Value == "Rare" or rarity.Value == "Epic") then
-                FireRemote("ReforgeTrinket", t.Name)
-                Core.Log("Reforge: " .. t.Name, "info")
-                break
-            end
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Sea Event System
--- ============================================================
-local SeaSystem = {}
-SeaSystem._timer = 0
-
-local SEA_MAP = {
-    autoSeaBeast   = { "Sea Beast", "Terrorshark", "Bone Demon" },
-    autoPirateRaid = { "Pirate Raid", "Mob" },
-    autoGhostShip  = { "Ghost Ship" },
-}
-
-function SeaSystem.Tick(dt: number)
-    SeaSystem._timer += dt
-    if SeaSystem._timer < 0.5 then return end
-    SeaSystem._timer = 0
-
-    for featureId, names in pairs(SEA_MAP) do
-        if Core.IsOn(featureId) then
-            local target, pos = FindNearestNPC(names, 3000)
-            if target and pos then
-                local _, hrp = GetChar()
-                if hrp and DistanceTo(pos) > 40 then
-                    TeleportTo(pos + Vector3.new(0, 5, 0))
-                end
-                if Core.IsOn("autoClick") then mouse1click() end
-            end
-        end
-    end
-
-    if Core.IsOn("autoSeaChest") then
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name:find("Chest") then
-                local root = obj:FindFirstChildOfClass("BasePart")
-                if root and DistanceTo(root.Position) < 300 then
-                    TeleportTo(root.Position + Vector3.new(0, 2, 0))
-                    FireRemote("OpenChest", obj)
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Fruit System
--- ============================================================
-local FruitSystem = {}
-FruitSystem._timer = 0
-
-function FruitSystem.Tick(dt: number)
-    FruitSystem._timer += dt
-    if FruitSystem._timer < 1 then return end
-    FruitSystem._timer = 0
-
-    local folder = Workspace:FindFirstChild("Fruits")
-    if not folder then return end
-
-    for _, fruit in ipairs(folder:GetChildren()) do
-        local root = fruit:IsA("BasePart") and fruit
-                  or fruit:FindFirstChildOfClass("BasePart")
-        if root then
-            if Core.IsOn("fruitNotifier") then
-                Core.Log("Fruit spawn: " .. fruit.Name, "warn")
-            end
-            if Core.IsOn("fruitSniper") or Core.IsOn("autoCollectFruit") then
-                TeleportTo(root.Position + Vector3.new(0, 2, 0))
-                FireRemote("PickFruit", fruit)
-                Core.State.Stats.FruitsCollected += 1
-                Core.Log("Thu thập: " .. fruit.Name, "success")
-            end
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Player Utilities
--- ============================================================
-local PlayerUtils = {}
-PlayerUtils._flyBV   = nil
-PlayerUtils._flyConn = nil
-
-function PlayerUtils.Init()
-    -- Fly Mode
-    Core.OnToggle("flyMode", function(on)
-        local c, hrp = GetChar()
-        if not c or not hrp then return end
-        if on then
-            
-            local bg = Instance.new("BodyGyro", hrp)
-            bg.Name = "FlyGyro"; bg.MaxTorque = Vector3.new(1e9,1e9,1e9); bg.D = 50
-            
-            local bv = Instance.new("BodyVelocity", hrp)
-            bv.Name = "FlyVelocity"; bv.MaxForce = Vector3.new(1e9,1e9,1e9); bv.Velocity = Vector3.zero
-            
-            PlayerUtils._flyBV = bv
-            PlayerUtils._flyConn = RunService.Heartbeat:Connect(function()
-                if not Core.IsOn("flyMode") then return end
-                local UIS = game:GetService("UserInputService")
-                local cam = Workspace.CurrentCamera
-                local vel, spd = Vector3.zero, 60
-                if UIS:IsKeyDown(Enum.KeyCode.W) then vel += cam.CFrame.LookVector  * spd end
-                if UIS:IsKeyDown(Enum.KeyCode.S) then vel -= cam.CFrame.LookVector  * spd end
-                if UIS:IsKeyDown(Enum.KeyCode.A) then vel -= cam.CFrame.RightVector * spd end
-                if UIS:IsKeyDown(Enum.KeyCode.D) then vel += cam.CFrame.RightVector * spd end
-                if UIS:IsKeyDown(Enum.KeyCode.Space)     then vel += Vector3.new(0, spd, 0) end
-                if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vel -= Vector3.new(0, spd, 0) end
-                if PlayerUtils._flyBV then PlayerUtils._flyBV.Velocity = vel end
-            end)
-        else
-            if PlayerUtils._flyConn then PlayerUtils._flyConn:Disconnect() end
-            if hrp then
-                local bg = hrp:FindFirstChild("FlyGyro")
-                local bv = hrp:FindFirstChild("FlyVelocity")
-                if bg then bg:Destroy() end
-                if bv then bv:Destroy() end
-            end
-        end
-    end)
-
-    -- No Clip
-    Core.OnToggle("noClip", function(on)
-        local c = LocalPlayer.Character
-        if not c then return end
-        for _, p in ipairs(c:GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = not on end
-        end
-    end)
-
-    -- WalkSpeed & JumpPower
-    RunService.Heartbeat:Connect(function()
-        if Core.IsOn("flyMode") then return end
-        local hum = GetHumanoid()
-        if hum then
-            hum.WalkSpeed = Core.GetSlider("walkSpeed")
-            hum.JumpPower = Core.GetSlider("jumpPower")
-        end
-    end)
-
-    -- Infinite Energy
-    RunService.Heartbeat:Connect(function()
-        if not Core.IsOn("infiniteEnergy") then return end
-        local data = LocalPlayer:FindFirstChild("Data") or LocalPlayer:FindFirstChild("leaderstats")
-        if data then
-            local e = data:FindFirstChild("Energy")
-            if e then e.Value = 10000 end
-        end
-    end)
-end
-
-function PlayerUtils.Tick(_dt: number)
-    if Core.IsOn("autoDodge") then
-        local c, hrp = GetChar()
-        if c and hrp then
-            for _, obj in ipairs(Workspace:GetDescendants()) do
-                if obj:IsA("BasePart") and obj.Name:find("Bullet") then
-                    if DistanceTo(obj.Position) < 12 then
-                        TeleportTo(hrp.Position + Vector3.new(
-                            math.random(-20,20), 0, math.random(-20,20)))
-                    end
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Stats System
--- ============================================================
-local StatsSystem = {}
-local STAT_MAP = {
-    statsMelee="Melee", statsDefense="Defense",
-    statsSword="Sword", statsGun="Gun", statsFruit="Blox Fruit"
-}
-
-function StatsSystem.Tick(_dt: number)
-    for id, name in pairs(STAT_MAP) do
-        if Core.IsOn(id) then FireRemote("AddStat", name) end
-    end
-    if Core.IsOn("smartStats") then
-        local data = LocalPlayer:FindFirstChild("Data")
-        if data then
-            local maxS, maxN = 0, "Melee"
-            for _, n in ipairs({"Melee","Defense","Sword","Gun","Blox Fruit"}) do
-                local v = data:FindFirstChild(n)
-                if v and v.Value > maxS then maxS = v.Value; maxN = n end
-            end
-            FireRemote("AddStat", maxN)
-        end
-    end
-end
-
--- ============================================================
---  MODULE: Quest System
--- ============================================================
 local QuestSystem = {}
 QuestSystem._timer = 0
 
-function QuestSystem.Tick(dt: number)
-    if not (Core.IsOn("autoQuest") or Core.IsOn("autoNextQuest")) then return end
+function QuestSystem.Tick(dt)
+    if not Core.IsOn("autoQuest") then return end
     QuestSystem._timer += dt
     if QuestSystem._timer < 2 then return end
     QuestSystem._timer = 0
 
-    local npc, pos = FindNearestNPC({"Quest", "Guard"}, 200)
-    if npc and pos then
-        TeleportTo(pos + Vector3.new(0, 3, 0))
-        FireRemote("AcceptQuest")
-        FireRemote("TurnInQuest")
-        Core.State.Stats.QuestsDone += 1
-        Core.Log("Quest #" .. Core.State.Stats.QuestsDone .. " hoàn thành!", "success")
+    -- Coba accept & turnin quest via remote
+    FireRemote("AcceptQuest")
+    FireRemote("TurnInQuest")
+    FireRemote("QuestAccept")
+    FireRemote("QuestComplete")
+
+    -- Cari NPC quest di workspace
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") or obj:IsA("NPC") then
+            local n = obj.Name:lower()
+            if n:find("quest") or n:find("giver") or n:find("guard") then
+                local root = obj:FindFirstChild("HumanoidRootPart")
+                    or obj:FindFirstChild("Torso")
+                if root and DistanceTo(root.Position) > 15 then
+                    TeleportTo(root.Position)
+                end
+                -- Interact
+                local prox = obj:FindFirstChildOfClass("ProximityPrompt")
+                if prox then
+                    pcall(function()
+                        fireproximityprompt(prox)
+                    end)
+                end
+                break
+            end
+        end
     end
 end
 
 -- ============================================================
---  MODULE: Misc
+--  AUTO BOSS
+-- ============================================================
+local BOSS_LIST = {
+    {id="autoDarkbeard",  name="Darkbeard",   pos=Vector3.new(29.3, 296.5, 1590.2)},
+    {id="autoRipIndra",   name="Rip_Indra",   pos=Vector3.new(-3996, 64, 3815)},
+    {id="autoDoughKing",  name="Dough King",  pos=Vector3.new(-3229, 47, 5085)},
+    {id="autoSoulReaper", name="Soul Reaper", pos=Vector3.new(-4770, 853, -1282)},
+    -- Generic boss
+    {id="autoBoss",       name="",            pos=nil},
+}
+
+local BOSS_NAMES = {
+    "Darkbeard","Rip_Indra","Dough King","Soul Reaper",
+    "Cake Queen","Island Empress","Longma","Kilo Admiral",
+    "Mr. 1","Don Swan","Cyborg","Beast Pirates",
+}
+
+local BossSystem = {}
+BossSystem._timer = 0
+BossSystem._target = nil
+
+function BossSystem.Tick(dt)
+    BossSystem._timer += dt
+    if BossSystem._timer < 0.5 then return end
+    BossSystem._timer = 0
+
+    -- Cek boss spesifik
+    for _, boss in ipairs(BOSS_LIST) do
+        if Core.IsOn(boss.id) then
+            -- Cari boss di workspace
+            if not BossSystem._target then
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("Model") then
+                        local hum = obj:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            local isBoss = false
+                            if boss.name ~= "" and obj.Name:find(boss.name) then
+                                isBoss = true
+                            elseif boss.id == "autoBoss" then
+                                for _, bn in ipairs(BOSS_NAMES) do
+                                    if obj.Name:find(bn) then isBoss=true; break end
+                                end
+                            end
+                            if isBoss then BossSystem._target = obj; break end
+                        end
+                    end
+                end
+            end
+
+            -- Teleport ke lokasi spawn boss
+            if not BossSystem._target and boss.pos then
+                TeleportTo(boss.pos)
+            end
+
+            -- Serang boss
+            if BossSystem._target then
+                local hum = BossSystem._target:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then
+                    BossSystem._target = nil
+                else
+                    AttackMob(BossSystem._target)
+                end
+            end
+            return
+        end
+    end
+end
+
+-- ============================================================
+--  TELEPORT SYSTEM
+-- ============================================================
+local TP_LOCATIONS = {
+    tpFirstSea      = Vector3.new(941.3, 19.5, 750.4),
+    tpSecondSea     = Vector3.new(-1765.9, 5, 4407.2),
+    tpThirdSea      = Vector3.new(-6228, 5, -1310),
+    tpQuestNPC      = Vector3.new(267, 8, 1580),
+    tpFruitDealer   = Vector3.new(1028, 39.5, 839),
+    tpSwordDealer   = Vector3.new(-80, 81, 1895),
+    tpRaidNPC       = Vector3.new(-1507, 8, 395),
+    tpBoss          = Vector3.new(29.3, 296.5, 1590.2),
+    tpHotCold       = Vector3.new(1003, 5, 5200),
+    tpPvPArena      = Vector3.new(-6800, 5, 1800),
+    tpLucianNPC     = Vector3.new(-1200, 5, 4200),
+    tpTrinketExpert = Vector3.new(-3000, 5, 3800),
+    tpTrinketRefiner= Vector3.new(-3100, 5, 3850),
+}
+
+local TpSystem = {}
+function TpSystem.DoTeleport(id)
+    local pos = TP_LOCATIONS[id]
+    if pos then TeleportTo(pos) end
+end
+
+-- ============================================================
+--  ESP SYSTEM (hiện tên NPC, Fruit, Boss trên màn hình)
+-- ============================================================
+local ESP = {}
+ESP._labels = {}
+ESP._timer  = 0
+
+local function MakeESPLabel(name, color, parent)
+    -- Xóa label cũ nếu có
+    local old = parent:FindFirstChild("_PhantomESP")
+    if old then old:Destroy() end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "_PhantomESP"
+    bb.Size = UDim2.new(0, 120, 0, 30)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = 200
+    bb.Parent = parent
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = name
+    lbl.TextColor3 = color
+    lbl.TextSize = 13
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextStrokeTransparency = 0
+    lbl.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    lbl.Parent = bb
+    return bb
+end
+
+function ESP.UpdateNPC()
+    if not Core.IsOn("npcESP") and not Core.IsOn("bossESP") then
+        -- Hapus semua ESP
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            local bb = obj:FindFirstChild("_PhantomESP")
+            if bb then bb:Destroy() end
+        end
+        return
+    end
+
+    local BOSS_SET = {}
+    for _, n in ipairs(BOSS_NAMES) do BOSS_SET[n] = true end
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 and obj ~= LocalPlayer.Character then
+                local root = obj:FindFirstChild("HumanoidRootPart")
+                    or obj:FindFirstChild("Torso")
+                if root then
+                    local isBoss = BOSS_SET[obj.Name] ~= nil
+                    if isBoss and Core.IsOn("bossESP") then
+                        local hp = math.round(hum.Health).."/"..math.round(hum.MaxHealth)
+                        local d  = math.round(DistanceTo(root.Position))
+                        MakeESPLabel("💀 "..obj.Name.."\n❤ "..hp.." ["..d.."m]",
+                            Color3.fromRGB(255,68,68), root)
+                    elseif not isBoss and Core.IsOn("npcESP") then
+                        local d = math.round(DistanceTo(root.Position))
+                        MakeESPLabel(obj.Name.." ["..d.."m]",
+                            Color3.fromRGB(100,180,255), root)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function ESP.UpdateFruit()
+    if not Core.IsOn("fruitESP") then
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "_PhantomFruitESP" then obj:Destroy() end
+        end
+        return
+    end
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if (obj:IsA("Model") or obj:IsA("Part")) and obj.Parent == Workspace.Fruits then
+            if not obj:FindFirstChild("_PhantomFruitESP") then
+                local bb = Instance.new("BillboardGui")
+                bb.Name = "_PhantomFruitESP"
+                bb.Size = UDim2.new(0,140,0,28)
+                bb.StudsOffset = Vector3.new(0,2,0)
+                bb.AlwaysOnTop = true
+                bb.MaxDistance = 500
+                bb.Parent = obj
+
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(1,0,1,0)
+                lbl.BackgroundTransparency = 1
+                lbl.Text = "🍎 "..obj.Name
+                lbl.TextColor3 = Color3.fromRGB(204,68,255)
+                lbl.TextSize = 12
+                lbl.Font = Enum.Font.GothamBold
+                lbl.TextStrokeTransparency = 0
+                lbl.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+                lbl.Parent = bb
+            end
+        end
+    end
+end
+
+function ESP.UpdatePlayer()
+    if not Core.IsOn("playerESP") then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local bb = hrp:FindFirstChild("_PhantomESP")
+                    if bb then bb:Destroy() end
+                end
+            end
+        end
+        return
+    end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum then
+                local d = math.round(DistanceTo(hrp.Position))
+                local hp = math.round(hum.Health)
+                MakeESPLabel("👤 "..p.Name.."\n❤ "..hp.." ["..d.."m]",
+                    Color3.fromRGB(255,255,80), hrp)
+            end
+        end
+    end
+end
+
+local ESP_TIMER = 0
+function ESP.Tick(dt)
+    ESP_TIMER += dt
+    if ESP_TIMER < 1 then return end -- Update ESP setiap 1 detik
+    ESP_TIMER = 0
+    pcall(ESP.UpdateNPC)
+    pcall(ESP.UpdateFruit)
+    pcall(ESP.UpdatePlayer)
+end
+
+-- ============================================================
+--  AUTO COLLECT FRUIT
+-- ============================================================
+local FruitSystem = {}
+FruitSystem._timer = 0
+
+function FruitSystem.Tick(dt)
+    FruitSystem._timer += dt
+    if FruitSystem._timer < 1 then return end
+    FruitSystem._timer = 0
+
+    if not Core.IsOn("autoCollectFruit") and not Core.IsOn("fruitSniper") then return end
+
+    local fruitsFolder = Workspace:FindFirstChild("Fruits")
+        or Workspace:FindFirstChild("GameObjects")
+    if not fruitsFolder then return end
+
+    for _, fruit in ipairs(fruitsFolder:GetChildren()) do
+        if fruit:IsA("Model") or fruit:IsA("Part") then
+            local root = fruit:FindFirstChild("HumanoidRootPart")
+                or fruit:FindFirstChild("Handle")
+                or (fruit:IsA("Part") and fruit or nil)
+            if root then
+                local d = DistanceTo(root.Position)
+                if d < 10 then
+                    -- Ambil fruit
+                    FireRemote("PickFruit", fruit)
+                    FireRemote("CollectFruit", fruit)
+                    Core.Stats.FruitsCollected = (Core.Stats.FruitsCollected or 0) + 1
+                elseif Core.IsOn("fruitSniper") and d < 300 then
+                    -- Teleport ke fruit
+                    TeleportTo(root.Position)
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================
+--  PLAYER UTILITIES
+-- ============================================================
+local PlayerUtils = {}
+PlayerUtils._flyBody = nil
+PlayerUtils._flyConn = nil
+
+function PlayerUtils.StartFly()
+    local char, hrp = GetChar()
+    if not hrp then return end
+
+    -- Hapus body lama
+    if PlayerUtils._flyBody then
+        PlayerUtils._flyBody:Destroy()
+        PlayerUtils._flyBody = nil
+    end
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(9e8, 9e8, 9e8)
+    bg.P = 9e4
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = Vector3.zero
+    bv.MaxForce = Vector3.new(9e8, 9e8, 9e8)
+    bv.P = 9e4
+    bv.Parent = hrp
+    PlayerUtils._flyBody = bv
+
+    PlayerUtils._flyConn = RunService.Heartbeat:Connect(function()
+        if not Core.IsOn("flyMode") then
+            bg:Destroy(); bv:Destroy()
+            PlayerUtils._flyBody = nil
+            if PlayerUtils._flyConn then PlayerUtils._flyConn:Disconnect() end
+            return
+        end
+        local speed = 60
+        local cf = workspace.CurrentCamera.CFrame
+        local vel = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel += cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel -= cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel -= cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel += cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel += Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel -= Vector3.new(0,1,0) end
+        bv.Velocity = vel * speed
+        bg.CFrame = workspace.CurrentCamera.CFrame
+    end)
+end
+
+function PlayerUtils.Tick(dt)
+    -- Fly
+    if Core.IsOn("flyMode") and not PlayerUtils._flyBody then
+        PlayerUtils.StartFly()
+    end
+    -- NoClip
+    if Core.IsOn("noClip") then
+        local char = LocalPlayer.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") and p.CanCollide then
+                    p.CanCollide = false
+                end
+            end
+        end
+    end
+    -- WalkSpeed
+    local hum = GetHum()
+    if hum then
+        if Core.IsOn("walkSpeed") then
+            hum.WalkSpeed = Core.GetSlider("walkSpeed")
+        end
+        if Core.IsOn("jumpPower") then
+            hum.JumpPower = Core.GetSlider("jumpPower")
+        end
+    end
+end
+
+-- ============================================================
+--  ANTI-AFK
 -- ============================================================
 local MiscSystem = {}
 MiscSystem._afkTimer = 0
 
-function MiscSystem.Init()
-    RunService.Heartbeat:Connect(function(dt)
-        if not Core.IsOn("antiAFK") then return end
+function MiscSystem.Tick(dt)
+    -- Anti-AFK
+    if Core.IsOn("antiAFK") then
         MiscSystem._afkTimer += dt
         if MiscSystem._afkTimer >= 60 then
             MiscSystem._afkTimer = 0
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
+            pcall(function()
+                VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                task.wait(0.1)
+                VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+            end)
         end
-    end)
-
-    Core.OnToggle("fpsBoost", function(on)
-        local ls = game:GetService("Lighting")
-        ls.GlobalShadows = not on
-        if on then
-            ls.FogEnd = 10000
-            for _, o in ipairs(Workspace:GetDescendants()) do
-                if o:IsA("ParticleEmitter") or o:IsA("Smoke")
-                   or o:IsA("Fire") or o:IsA("Sparkles") then
-                    o.Enabled = false
+    end
+    -- FPS Boost
+    if Core.IsOn("fpsBoost") then
+        pcall(function()
+            for _, v in ipairs(Workspace:GetDescendants()) do
+                if v:IsA("ParticleEmitter") or v:IsA("Trail")
+                    or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+                    v.Enabled = false
                 end
             end
-            Core.Log("FPS Boost bật.", "success")
-        end
-    end)
-end
-
-function MiscSystem.Tick(_dt: number)
-    if Core.IsOn("autoChest") then
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("Model") and (obj.Name:find("Chest") or obj.Name == "Box") then
-                local root = obj:FindFirstChildOfClass("BasePart")
-                if root and DistanceTo(root.Position) < 300 then
-                    TeleportTo(root.Position + Vector3.new(0,2,0))
-                    FireRemote("OpenChest", obj)
-                end
-            end
-        end
+            local lighting = game:GetService("Lighting")
+            lighting.GlobalShadows = false
+            lighting.FogEnd = 9e4
+        end)
     end
 end
 
@@ -716,23 +670,27 @@ end
 -- ============================================================
 function Systems.Init(coreRef)
     Core = coreRef
-    PlayerUtils.Init()
-    MiscSystem.Init()
-    Core.Log("Systems (Update 29) khởi tạo xong.", "info")
+
+    -- Daftarkan callback untuk tombol teleport
+    for id, _ in pairs(TP_LOCATIONS) do
+        if Core._Callbacks then
+            Core._Callbacks[id] = function()
+                TpSystem.DoTeleport(id)
+            end
+        end
+    end
+
+    Core.Log("Systems v4.3.0 siap!", "info")
 end
 
-function Systems.Tick(dt: number)
-    FarmEngine.Tick(dt)
-    Combat.Tick(dt)
-    BossSystem.Tick(dt)
-    DungeonSystem.Tick(dt)
-    TrinketSystem.Tick(dt)
-    SeaSystem.Tick(dt)
-    FruitSystem.Tick(dt)
-    PlayerUtils.Tick(dt)
-    StatsSystem.Tick(dt)
-    QuestSystem.Tick(dt)
-    MiscSystem.Tick(dt)
+function Systems.Tick(dt)
+    pcall(FarmEngine.Tick, dt)
+    pcall(BossSystem.Tick, dt)
+    pcall(QuestSystem.Tick, dt)
+    pcall(FruitSystem.Tick, dt)
+    pcall(ESP.Tick, dt)
+    pcall(PlayerUtils.Tick, dt)
+    pcall(MiscSystem.Tick, dt)
 end
 
 return Systems
